@@ -1,0 +1,119 @@
+#![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
+//! Example of building main pods that verify signed pods and other main pods using custom
+//! predicates
+//!
+//! The example follows a scenario where a game issues signed pods to players with the points
+//! accumulated after finishing each game level.  Then we build a custom predicate to prove that
+//! the sum of points from level 1 and 2 for a player is over 9000.
+//!
+//! Run in real mode: `cargo run --release --example main_pod_points`
+//! Run in mock mode: `cargo run --release --example main_pod_points -- --mock`
+use std::env;
+
+use pod2::{
+    backends::plonky2::{
+        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
+        primitives::ec::schnorr::SecretKey, signer::Signer,
+    },
+    frontend::{MainPodBuilder, Operation, SignedDictBuilder},
+    lang::parse,
+    middleware::{MainPodProver, Params, VDSet, EMPTY_VALUE},
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+    let args: Vec<String> = env::args().collect();
+    let mock = args.get(1).is_some_and(|arg1| arg1 == "--mock");
+    if mock {
+        println!("Using MockMainPod")
+    } else {
+        println!("Using MainPod")
+    }
+
+    let params = Params::default();
+
+    let mock_prover = MockProver {};
+    let real_prover = Prover {};
+    let (vd_set, prover): (_, &dyn MainPodProver) = if mock {
+        (&VDSet::new(&[]), &mock_prover)
+    } else {
+        println!("Prebuilding circuits to calculate vd_set...");
+        let vd_set = &*DEFAULT_VD_SET;
+        println!("vd_set calculation complete");
+        (vd_set, &real_prover)
+    };
+
+    // Create a schnorr key pair to sign pods
+    let game_sk = SecretKey::new_rand();
+    let game_pk = game_sk.public_key();
+
+    let game_signer = Signer(game_sk);
+
+    let light_switch_predicate = r#"
+        LightSwitch_base(old_state, new_state, action) = AND(
+            Equal(old_state, {})
+            DictUpdate(new_state, old_state, "position", action.position)
+            DictUpdate(new_state, old_state, "secret", action.secret)
+            Equal(action.type, "base")
+        )
+    "#;
+    // Build a signed pod
+    let mut old_state: SignedDictBuilder = SignedDictBuilder::new(&params);
+    let old_state = old_state.sign(&game_signer)?;
+    old_state.verify()?;
+
+    let mut new_state: SignedDictBuilder = SignedDictBuilder::new(&params);
+    new_state.insert("position", "on");
+    new_state.insert("secret", 42);
+    let new_state = new_state.sign(&game_signer)?;
+    new_state.verify()?;
+
+    let mut action: SignedDictBuilder = SignedDictBuilder::new(&params);
+    action.insert("type", "base");
+    action.insert("position", "on");
+    action.insert("secret", 42);
+    let action = action.sign(&game_signer)?;
+    action.verify()?;
+
+    println!("# old_state:\n{}", old_state);
+    println!("# new_state:\n{}", new_state);
+    println!("# action:\n{}", action);
+
+    let mut builder = MainPodBuilder::new(&params, vd_set);
+    let st_equal = builder.priv_op(Operation::eq(old_state.dict.clone(), EMPTY_VALUE))?;
+
+    let st_dict_update1 = builder.priv_op(Operation::dict_update(
+        new_state.dict.clone(),
+        old_state.dict.clone(),
+        "position",
+        action.get("position").unwrap().clone(),
+    ))?;
+
+    let st_dict_update2 = builder.priv_op(Operation::dict_update(
+        new_state.dict.clone(),
+        old_state.dict.clone(),
+        "secret",
+        action.get("secret").unwrap().clone(),
+    ))?;
+    let st_equal_action_type =
+        builder.priv_op(Operation::eq(action.get("type").unwrap().clone(), "base"))?;
+    let light_switch_batch = parse(light_switch_predicate, &params, &[])?.custom_batch;
+    let light_switch_pred = light_switch_batch
+        .predicate_ref_by_name("LightSwitch_base")
+        .unwrap();
+    let _st_light_switch = builder.pub_op(Operation::custom(
+        light_switch_pred,
+        [
+            st_equal,
+            st_dict_update1,
+            st_dict_update2,
+            st_equal_action_type,
+        ],
+    ))?;
+    println!("Proving pod_light_switch...");
+    let pod_light_switch = builder.prove(prover).unwrap();
+    println!("# pod_light_switch\n:{}", pod_light_switch);
+    pod_light_switch.pod.verify().unwrap();
+
+    Ok(())
+}
