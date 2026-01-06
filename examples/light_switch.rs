@@ -17,7 +17,7 @@ use pod2::{
     },
     frontend::{MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
-    middleware::{MainPodProver, Params, VDSet, EMPTY_VALUE},
+    middleware::{MainPodProver, Params, VDSet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,16 +45,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a schnorr key pair to sign pods
     let game_sk = SecretKey::new_rand();
-    let game_pk = game_sk.public_key();
 
     let game_signer = Signer(game_sk);
 
     let light_switch_predicate = r#"
-        LightSwitch_base(old_state, new_state, private: action) = AND(
+        LightSwitch_base(old_state, new_state, private: action, mid_state) = AND(
             Equal(old_state.position, "")
             Equal(old_state.secret, 0)
-            DictUpdate(new_state, old_state, "position", action.position)
-            DictUpdate(new_state, old_state, "secret", action.secret)
+            DictUpdate(mid_state, old_state, "position", action.position)
+            DictUpdate(new_state, mid_state, "secret", action.secret)
             Equal(action.type, "base")
         )
     "#;
@@ -64,6 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     old_state.insert("secret", 0);
     let old_state = old_state.sign(&game_signer)?;
     old_state.verify()?;
+
+    let mut mid_state: SignedDictBuilder = SignedDictBuilder::new(&params);
+    mid_state.insert("position", "on");
+    mid_state.insert("secret", 0);
+    let mid_state = mid_state.sign(&game_signer)?;
+    mid_state.verify()?;
 
     let mut new_state: SignedDictBuilder = SignedDictBuilder::new(&params);
     new_state.insert("position", "on");
@@ -79,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     action.verify()?;
 
     println!("# old_state:\n{}", old_state);
+    println!("# mid_state:\n{}", mid_state);
     println!("# new_state:\n{}", new_state);
     println!("# action:\n{}", action);
 
@@ -87,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let st_equal_secret = builder.priv_op(Operation::eq((&old_state, "secret"), 0))?;
 
     let st_dict_update1 = builder.priv_op(Operation::dict_update(
-        new_state.dict.clone(),
+        mid_state.dict.clone(),
         old_state.dict.clone(),
         "position",
         (&action, "position"),
@@ -95,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let st_dict_update2 = builder.priv_op(Operation::dict_update(
         new_state.dict.clone(),
-        old_state.dict.clone(),
+        mid_state.dict.clone(),
         "secret",
         (&action, "secret"),
     ))?;
