@@ -17,7 +17,7 @@ use pod2::{
     },
     frontend::{MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
-    middleware::{MainPodProver, Params, VDSet},
+    middleware::{hash_values, MainPodProver, Params, VDSet, Value},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,8 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let game_signer = Signer(game_sk);
 
     let light_switch_predicate = r#"
-        LightSwitch_base(old_state, new_state, private: action, mid_state) = AND(
-            Equal(old_state.position, "")
+        LightSwitch_base(new_state_hash, private: action, mid_state, old_state, new_state) = AND(
+            HashOf(new_state_hash, new_state, 0)
+            // Equal(old_state.position, "")
             Equal(old_state.secret, 0)
             DictUpdate(mid_state, old_state, "position", action.position)
             DictUpdate(new_state, mid_state, "secret", action.secret)
@@ -83,12 +84,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let action = action.sign(&game_signer)?;
     action.verify()?;
 
+    // let old_state_hash = hash_values(&[Value::from(old_state.dict.clone()), Value::from(0)]);
+    let new_state_hash = hash_values(&[Value::from(new_state.dict.clone()), Value::from(0)]);
+
     println!("# old_state:\n{}", old_state);
     println!("# mid_state:\n{}", mid_state);
     println!("# new_state:\n{}", new_state);
     println!("# action:\n{}", action);
 
     let mut builder = MainPodBuilder::new(&params, vd_set);
+    // let st_old_state_hash = builder.pub_op(Operation::hash_of(
+    //     old_state_hash,
+    //     old_state.dict.clone(),
+    //     0,
+    // ))?;
+    let st_new_state_hash = builder.priv_op(Operation::hash_of(
+        new_state_hash,
+        new_state.dict.clone(),
+        0,
+    ))?;
+
     let st_equal_position = builder.priv_op(Operation::eq((&old_state, "position"), ""))?;
     let st_equal_secret = builder.priv_op(Operation::eq((&old_state, "secret"), 0))?;
 
@@ -113,7 +128,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _st_light_switch = builder.pub_op(Operation::custom(
         light_switch_pred,
         [
-            st_equal_position,
+            // st_old_state_hash,
+            st_new_state_hash,
+            // st_equal_position,
             st_equal_secret,
             st_dict_update1,
             st_dict_update2,
