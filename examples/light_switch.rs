@@ -72,9 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     new_state.verify()?;
 
     let mut action: SignedDictBuilder = SignedDictBuilder::new(&params);
-    action.insert("type", "base");
     action.insert("position", "on");
     action.insert("secret", 42);
+    action.insert("type", "base");
     let action = action.sign(&game_signer)?;
     action.verify()?;
 
@@ -83,28 +83,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("# action:\n{}", action);
 
     let mut builder = MainPodBuilder::new(&params, vd_set);
-    let st_equal_position = builder.priv_op(Operation::eq(
-        old_state.get("position").unwrap().clone(),
-        "",
-    ))?;
-    let st_equal_secret =
-        builder.priv_op(Operation::eq(old_state.get("secret").unwrap().clone(), 0))?;
+    let st_equal_position = builder.priv_op(Operation::eq((&old_state, "position"), ""))?;
+    let st_equal_secret = builder.priv_op(Operation::eq((&old_state, "secret"), 0))?;
 
     let st_dict_update1 = builder.priv_op(Operation::dict_update(
         new_state.dict.clone(),
         old_state.dict.clone(),
         "position",
-        action.get("position").unwrap().clone(),
+        (&action, "position"),
     ))?;
 
     let st_dict_update2 = builder.priv_op(Operation::dict_update(
         new_state.dict.clone(),
         old_state.dict.clone(),
         "secret",
-        action.get("secret").unwrap().clone(),
+        (&action, "secret"),
     ))?;
-    let st_equal_action_type =
-        builder.priv_op(Operation::eq(action.get("type").unwrap().clone(), "base"))?;
+    let st_equal_action_type = builder.priv_op(Operation::eq((&action, "type"), "base"))?;
     let light_switch_batch = parse(light_switch_predicate, &params, &[])?.custom_batch;
     let light_switch_pred = light_switch_batch
         .predicate_ref_by_name("LightSwitch_base")
