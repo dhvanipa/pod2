@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let game_signer = Signer(game_sk);
 
     let light_switch_predicate = r#"
-        LightSwitch_base(old_state, new_state, action) = AND(
+        LightSwitch_base(old_state, new_state, private: action) = AND(
             Equal(old_state.position, "")
             Equal(old_state.secret, 0)
             DictUpdate(new_state, old_state, "position", action.position)
