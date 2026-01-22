@@ -19,6 +19,7 @@ use pod2::{
     lang::parse,
     middleware::{hash_values, MainPodProver, Params, VDSet, Value},
 };
+use serde::Serialize;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -49,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let game_signer = Signer(game_sk);
 
     let light_switch_predicate = r#"
-        LightSwitch_base(new_state_hash, private: action, mid_state, old_state, new_state) = AND(
+        LightSwitch_base(new_state, private: action, mid_state, old_state, new_state_hash) = AND(
             HashOf(new_state_hash, new_state, 0)
             // Equal(old_state.position, "")
             Equal(old_state.secret, 0)
@@ -139,8 +140,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))?;
     println!("Proving pod_light_switch...");
     let pod_light_switch = builder.prove(prover).unwrap();
+
     println!("# pod_light_switch\n:{}", pod_light_switch);
     pod_light_switch.pod.verify().unwrap();
+
+    // Serialize the pod to a file
+    let mut file = std::fs::File::create("pod_light_switch.json")?;
+    serde_json::to_writer(&mut file, &pod_light_switch)?;
+
+    // make a new pod with only the dictionary merkle root
+    // eg, serialize and edit the file
+    // verify this new pod -- this should work
 
     Ok(())
 }
