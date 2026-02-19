@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::From,
     fmt,
+    sync::Arc,
 };
 
 use itertools::Itertools;
@@ -12,11 +13,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
-use crate::middleware::{
-    self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
-    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
-    OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
-    StatementArg, VDSet, Value, ValueRef,
+use crate::{
+    merkle_backend::{InMemoryMerkleProofBackend, MerkleProofBackend},
+    middleware::{
+        self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
+        prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
+        OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
+        StatementArg, VDSet, Value, ValueRef,
+    },
 };
 
 mod custom;
@@ -135,6 +139,7 @@ pub struct MainPodBuilder {
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
+    merkle_backend: Arc<dyn MerkleProofBackend>,
     // Internal state
     dict_contains: Vec<(Value, Value)>, // (root, key)
 }
@@ -158,6 +163,14 @@ impl fmt::Display for MainPodBuilder {
 
 impl MainPodBuilder {
     pub fn new(params: &Params, vd_set: &VDSet) -> Self {
+        Self::new_with_merkle_backend(params, vd_set, Arc::new(InMemoryMerkleProofBackend))
+    }
+
+    pub fn new_with_merkle_backend(
+        params: &Params,
+        vd_set: &VDSet,
+        merkle_backend: Arc<dyn MerkleProofBackend>,
+    ) -> Self {
         Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
@@ -165,6 +178,7 @@ impl MainPodBuilder {
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
+            merkle_backend,
             dict_contains: Vec::new(),
         }
     }
@@ -321,7 +335,7 @@ impl MainPodBuilder {
     }
 
     /// Fills in auxiliary data if necessary/possible.
-    fn fill_in_aux(op: Operation) -> Result<Operation> {
+    fn fill_in_aux(&self, op: Operation) -> Result<Operation> {
         use NativeOperation::{
             ContainerDeleteFromEntries, ContainerInsertFromEntries, ContainerUpdateFromEntries,
             ContainsFromEntries, NotContainsFromEntries,
@@ -348,12 +362,12 @@ impl MainPodBuilder {
                             "Invalid key argument for op {}.",
                             op
                         )))?;
-                let proof = if op_type == &Native(ContainsFromEntries) {
-                    container.prove_existence(key)?.1
-                } else {
-                    container.prove_nonexistence(key)?
-                };
-                Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
+                let aux = self.merkle_backend.prove_contains(
+                    container,
+                    key,
+                    op_type == &Native(ContainsFromEntries),
+                )?;
+                Ok(Operation(op_type.clone(), op.1, aux))
             }
             (Native(ContainerInsertFromEntries), OpAux::None)
             | (Native(ContainerUpdateFromEntries), OpAux::None)
@@ -372,27 +386,18 @@ impl MainPodBuilder {
                             "Invalid key argument for op {}.",
                             op
                         )))?;
-                let value =
-                    op.1.get(3)
-                        .and_then(|arg| arg.value())
-                        .ok_or(Error::custom(format!(
-                            "Invalid key argument for op {}.",
-                            op
-                        )));
-                let proof = match op_type {
-                    Native(ContainerInsertFromEntries) => {
-                        old_container.prove_insertion(key, value?)?
-                    }
-                    Native(ContainerUpdateFromEntries) => {
-                        old_container.prove_update(key, value?)?
-                    }
-                    _ => old_container.prove_deletion(key)?,
+                let value = op.1.get(3).and_then(|arg| arg.value());
+                let op_native = match op_type {
+                    Native(native) => *native,
+                    _ => unreachable!("Matched only native operations"),
                 };
-                Ok(Operation(
-                    op_type.clone(),
-                    op.1,
-                    OpAux::MerkleTreeStateTransitionProof(proof),
-                ))
+                let aux = self.merkle_backend.prove_state_transition(
+                    op_native,
+                    old_container,
+                    key,
+                    value,
+                )?;
+                Ok(Operation(op_type.clone(), op.1, aux))
             }
             _ => Ok(op),
         }
@@ -643,7 +648,7 @@ impl MainPodBuilder {
         op: Operation,
     ) -> Result<Statement> {
         self.add_entries_contains(&op)?;
-        let op = Self::fill_in_aux(Self::lower_op(op)?)?;
+        let op = self.fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;
         self.insert(public, (st, op))?;
 

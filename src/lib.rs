@@ -8,6 +8,7 @@ pub mod backends;
 pub mod cache;
 pub mod frontend;
 pub mod lang;
+pub mod merkle_backend;
 pub mod middleware;
 
 #[cfg(any(test, feature = "examples"))]
