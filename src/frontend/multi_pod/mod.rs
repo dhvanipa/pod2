@@ -50,10 +50,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
+    sync::Arc,
 };
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
+    merkle_backend::{InMemoryMerkleProofBackend, MerkleProofBackend},
     middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
 };
 
@@ -165,6 +167,7 @@ impl MultiPodResult {
 pub struct MultiPodBuilder {
     params: Params,
     vd_set: VDSet,
+    merkle_backend: Arc<dyn MerkleProofBackend>,
     options: Options,
     /// External input PODs (already proved).
     input_pods: Vec<MainPod>,
@@ -189,6 +192,7 @@ pub struct MultiPodBuilder {
 pub struct SolvedMultiPod {
     params: Params,
     vd_set: VDSet,
+    merkle_backend: Arc<dyn MerkleProofBackend>,
     input_pods: Vec<MainPod>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
@@ -239,7 +243,11 @@ impl SolvedMultiPod {
         earlier_pods: &[MainPod],
         prover: &dyn MainPodProver,
     ) -> Result<MainPod> {
-        let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
+        let mut builder = MainPodBuilder::new_with_merkle_backend(
+            &self.params,
+            &self.vd_set,
+            self.merkle_backend.clone(),
+        );
         let solution = &self.solution;
         let statements_in_this_pod = &solution.pod_statements[pod_idx];
 
@@ -448,11 +456,31 @@ impl fmt::Display for SolvedMultiPod {
 impl MultiPodBuilder {
     /// Create a new MultiPodBuilder with default options.
     pub fn new(params: &Params, vd_set: &VDSet) -> Self {
-        Self::new_with_options(params, vd_set, Options::default())
+        Self::new_with_options_and_merkle_backend(
+            params,
+            vd_set,
+            Options::default(),
+            Arc::new(InMemoryMerkleProofBackend),
+        )
     }
 
     /// Create a new MultiPodBuilder with custom options.
     pub fn new_with_options(params: &Params, vd_set: &VDSet, options: Options) -> Self {
+        Self::new_with_options_and_merkle_backend(
+            params,
+            vd_set,
+            options,
+            Arc::new(InMemoryMerkleProofBackend),
+        )
+    }
+
+    /// Create a new MultiPodBuilder with custom options and Merkle proof backend.
+    pub fn new_with_options_and_merkle_backend(
+        params: &Params,
+        vd_set: &VDSet,
+        options: Options,
+        merkle_backend: Arc<dyn MerkleProofBackend>,
+    ) -> Self {
         let unlimited_params = Params {
             max_statements: usize::MAX / 2,
             max_public_statements: usize::MAX / 2,
@@ -460,10 +488,15 @@ impl MultiPodBuilder {
             max_input_pods_public_statements: usize::MAX / 2,
             ..params.clone()
         };
-        let builder = MainPodBuilder::new(&unlimited_params, vd_set);
+        let builder = MainPodBuilder::new_with_merkle_backend(
+            &unlimited_params,
+            vd_set,
+            merkle_backend.clone(),
+        );
         Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
+            merkle_backend,
             options,
             builder,
             input_pods: Vec::new(),
@@ -623,6 +656,7 @@ impl MultiPodBuilder {
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
+            merkle_backend: self.merkle_backend,
             input_pods: self.input_pods,
             statements: self.statements,
             operations: self.operations,
