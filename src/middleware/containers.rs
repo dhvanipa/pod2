@@ -2,13 +2,17 @@
 //! <https://0xparc.github.io/pod2/values.html#dictionary-array-set> .
 
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "backend_plonky2")]
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
-use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{
+    MerkleProof, MerkleStorage, MerkleTree,
+};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
     middleware::{Error, Hash, Key, RawValue, Result, Value},
@@ -46,6 +50,18 @@ impl Dictionary {
             mt: MerkleTree::new(&kvs_raw),
             kvs,
         }
+    }
+    #[cfg(feature = "backend_plonky2")]
+    pub fn new_with_storage(
+        kvs: HashMap<Key, Value>,
+        storage: Arc<dyn MerkleStorage>,
+    ) -> Result<Self> {
+        let kvs_raw: HashMap<RawValue, RawValue> =
+            kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
+        Ok(Self {
+            mt: MerkleTree::new_with_storage(&kvs_raw, storage)?,
+            kvs,
+        })
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()

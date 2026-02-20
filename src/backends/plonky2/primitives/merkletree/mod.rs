@@ -1,6 +1,6 @@
 //! Module that implements the MerkleTree specified at
 //! <https://0xparc.github.io/pod2/merkletree.html> .
-use std::{collections::HashMap, fmt, iter::IntoIterator};
+use std::{collections::HashMap, fmt, iter::IntoIterator, sync::Arc};
 
 use itertools::zip_eq;
 use plonky2::{
@@ -17,6 +17,10 @@ pub mod circuit;
 pub use circuit::*;
 pub mod error;
 pub use error::{TreeError, TreeResult};
+pub mod storage;
+pub use storage::{
+    in_memory_storage, DiskMerkleStorage, InMemoryMerkleStorage, MerkleStorage, StoredNode,
+};
 
 /// Theoretical max depth of a merkle tree.  This limits appears because we store keys of 256 bits.
 const MAX_DEPTH: usize = 256;
@@ -26,6 +30,8 @@ const MAX_DEPTH: usize = 256;
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
     root: Node,
+    kvs: HashMap<RawValue, RawValue>,
+    storage: Arc<dyn MerkleStorage>,
 }
 
 impl PartialEq for MerkleTree {
@@ -36,19 +42,51 @@ impl PartialEq for MerkleTree {
 impl Eq for MerkleTree {}
 
 impl MerkleTree {
-    /// builds a new `MerkleTree` where the leaves contain the given key-values
-    pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
-        // Start with an empty node as root.
+    fn build_root_from_kvs(kvs: &HashMap<RawValue, RawValue>) -> Node {
         let mut root = Node::None;
-
-        // Iterate over key-value pairs (if any) and add them.
         for (k, v) in kvs.iter() {
             root.apply_op(MerkleTreeOp::Insert, *k, Some(*v)).unwrap();
         }
-
-        // Fill in hashes.
         let _ = root.compute_hash();
-        Self { root }
+        root
+    }
+
+    /// builds a new `MerkleTree` where the leaves contain the given key-values
+    pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
+        Self::new_with_storage(kvs, in_memory_storage()).expect("in-memory storage")
+    }
+
+    /// builds a new `MerkleTree` using a custom storage backend.
+    pub fn new_with_storage(
+        kvs: &HashMap<RawValue, RawValue>,
+        storage: Arc<dyn MerkleStorage>,
+    ) -> TreeResult<Self> {
+        let root = Self::build_root_from_kvs(kvs);
+        let tree = Self {
+            root,
+            kvs: kvs.clone(),
+            storage,
+        };
+        tree.persist_full_snapshot()?;
+        Ok(tree)
+    }
+
+    /// Loads a `MerkleTree` from the given storage backend snapshot.
+    pub fn from_storage(storage: Arc<dyn MerkleStorage>) -> TreeResult<Self> {
+        let kvs = if let Some(kvs) = storage.load_kvs()? {
+            kvs
+        } else {
+            let mut kvs = HashMap::new();
+            if let Some(root) = storage.load_root()? {
+                Self::load_kvs_from_nodes(&storage, root, &mut kvs)?;
+            }
+            kvs
+        };
+        Ok(Self {
+            root: Self::build_root_from_kvs(&kvs),
+            kvs,
+            storage,
+        })
     }
 
     /// returns the root of the tree
@@ -59,7 +97,7 @@ impl MerkleTree {
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(*key);
-        let (key_resolution, _) = self.root.down(0, path, None);
+        let (key_resolution, _) = self.down_storage(0, path, None)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
             _ => Err(TreeError::key_not_found()),
@@ -69,7 +107,7 @@ impl MerkleTree {
     /// returns a boolean indicating whether the key exists in the tree
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(*key);
-        match self.root.down(0, path, None) {
+        match self.down_storage(0, path, None)? {
             (Some((k, _)), _) if &k == key => Ok(true),
             _ => Ok(false),
         }
@@ -91,6 +129,8 @@ impl MerkleTree {
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
+        self.kvs.insert(*key, *value);
+        self.persist_delta_for_key(*key)?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Insert, // insertion
@@ -120,6 +160,8 @@ impl MerkleTree {
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
+        self.kvs.insert(*key, *value);
+        self.persist_delta_for_key(*key)?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Update,
@@ -142,6 +184,8 @@ impl MerkleTree {
 
         let proof = self.prove_nonexistence(key)?;
         assert!(!proof.existence);
+        self.kvs.remove(key);
+        self.persist_delta_for_key(*key)?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Delete,
@@ -155,6 +199,152 @@ impl MerkleTree {
         })
     }
 
+    fn persist_full_snapshot(&self) -> TreeResult<()> {
+        self.storage.save_kvs(&self.kvs)?;
+        self.storage.save_root(self.root())?;
+        let _ = self.persist_nodes(&self.root)?;
+        Ok(())
+    }
+
+    fn persist_delta_for_key(&self, key: RawValue) -> TreeResult<()> {
+        self.storage.save_root(self.root())?;
+        let key_path = keypath(key);
+        self.persist_nodes_along_path(&self.root, &key_path, 0)?;
+        Ok(())
+    }
+
+    fn persist_nodes(&self, node: &Node) -> TreeResult<Hash> {
+        match node {
+            Node::None => Ok(EMPTY_HASH),
+            Node::Leaf(leaf) => {
+                let hash = leaf.hash();
+                self.storage.save_node(
+                    hash,
+                    &StoredNode::Leaf {
+                        key: leaf.key,
+                        value: leaf.value,
+                    },
+                )?;
+                Ok(hash)
+            }
+            Node::Intermediate(intermediate) => {
+                let left_hash = self.persist_nodes(&intermediate.left)?;
+                let right_hash = self.persist_nodes(&intermediate.right)?;
+                let hash = intermediate.hash();
+                self.storage.save_node(
+                    hash,
+                    &StoredNode::Intermediate {
+                        left: left_hash,
+                        right: right_hash,
+                    },
+                )?;
+                Ok(hash)
+            }
+        }
+    }
+
+    fn persist_nodes_along_path(&self, node: &Node, key_path: &[bool], lvl: usize) -> TreeResult<()> {
+        match node {
+            Node::None => Ok(()),
+            Node::Leaf(leaf) => self.storage.save_node(
+                leaf.hash(),
+                &StoredNode::Leaf {
+                    key: leaf.key,
+                    value: leaf.value,
+                },
+            ),
+            Node::Intermediate(intermediate) => {
+                let left_hash = intermediate.left.hash();
+                let right_hash = intermediate.right.hash();
+                self.storage.save_node(
+                    intermediate.hash(),
+                    &StoredNode::Intermediate {
+                        left: left_hash,
+                        right: right_hash,
+                    },
+                )?;
+                if lvl >= key_path.len() {
+                    return Ok(());
+                }
+                if key_path[lvl] {
+                    self.persist_nodes_along_path(&intermediate.right, key_path, lvl + 1)
+                } else {
+                    self.persist_nodes_along_path(&intermediate.left, key_path, lvl + 1)
+                }
+            }
+        }
+    }
+
+    fn load_kvs_from_nodes(
+        storage: &Arc<dyn MerkleStorage>,
+        hash: Hash,
+        out: &mut HashMap<RawValue, RawValue>,
+    ) -> TreeResult<()> {
+        if hash == EMPTY_HASH {
+            return Ok(());
+        }
+        let Some(node) = storage.load_node(hash)? else {
+            return Err(TreeError::from(anyhow::anyhow!(
+                "missing merkle node for hash {}",
+                hash
+            )));
+        };
+        match node {
+            StoredNode::Leaf { key, value } => {
+                out.insert(key, value);
+                Ok(())
+            }
+            StoredNode::Intermediate { left, right } => {
+                Self::load_kvs_from_nodes(storage, left, out)?;
+                Self::load_kvs_from_nodes(storage, right, out)
+            }
+        }
+    }
+
+    fn down_storage(
+        &self,
+        mut lvl: usize,
+        path: Vec<bool>,
+        mut siblings: Option<&mut Vec<Hash>>,
+    ) -> TreeResult<(Option<(RawValue, RawValue)>, usize)> {
+        let root_hash = self.storage.load_root()?.unwrap_or(self.root());
+        if root_hash == EMPTY_HASH {
+            return Ok((None, lvl));
+        }
+
+        let mut cur = root_hash;
+        loop {
+            let node = self.storage.load_node(cur)?;
+            match node {
+                Some(StoredNode::Leaf { key, value }) => return Ok((Some((key, value)), lvl)),
+                Some(StoredNode::Intermediate { left, right }) => {
+                    if path[lvl] {
+                        if let Some(s) = siblings.as_mut() {
+                            s.push(left);
+                        }
+                        cur = right;
+                    } else {
+                        if let Some(s) = siblings.as_mut() {
+                            s.push(right);
+                        }
+                        cur = left;
+                    }
+                    if cur == EMPTY_HASH {
+                        return Ok((None, lvl + 1));
+                    }
+                    lvl += 1;
+                    if lvl > MAX_DEPTH {
+                        return Err(TreeError::max_depth());
+                    }
+                }
+                None => {
+                    // Fallback when storage has no node index entries.
+                    return Ok(self.root.down(lvl, path, siblings));
+                }
+            }
+        }
+    }
+
     /// returns a proof of existence, which proves that the given key exists in
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
@@ -163,7 +353,7 @@ impl MerkleTree {
 
         let mut siblings: Vec<Hash> = Vec::new();
 
-        match self.root.down(0, path, Some(&mut siblings)) {
+        match self.down_storage(0, path, Some(&mut siblings))? {
             (Some((k, v)), _) if &k == key => Ok((
                 v,
                 MerkleProof {
@@ -186,7 +376,7 @@ impl MerkleTree {
         let mut siblings: Vec<Hash> = Vec::new();
 
         // note: non-existence of a key can be in 2 cases:
-        match self.root.down(0, path, Some(&mut siblings)) {
+        match self.down_storage(0, path, Some(&mut siblings))? {
             // case i) the expected leaf does not exist
             (None, _) => Ok(MerkleProof {
                 existence: false,
