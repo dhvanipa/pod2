@@ -16,8 +16,6 @@ pub enum TreeInnerError {
     ProofFail(String), // inclusion / exclusion
     #[error("invalid {0} proof")]
     InvalidProof(String),
-    #[error("invalid state transition proof argument: {0}")]
-    InvalidStateTransitionProogArg(String),
     #[error("state transition proof does not verify, reason: {0}")]
     StateTransitionProofFail(String),
     #[error("circuit max_depth {0} is smaller than proof depth {1}")]
@@ -71,9 +69,6 @@ impl TreeError {
     }
     pub(crate) fn invalid_proof(obj: String) -> Self {
         new!(InvalidProof(obj))
-    }
-    pub(crate) fn invalid_state_transition_proof_arg(reason: String) -> Self {
-        new!(InvalidStateTransitionProogArg(reason))
     }
     pub(crate) fn state_transition_fail(reason: String) -> Self {
         new!(StateTransitionProofFail(reason))
