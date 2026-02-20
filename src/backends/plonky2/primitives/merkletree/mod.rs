@@ -311,6 +311,22 @@ impl MerkleTree {
         }
     }
 
+    /// Traverses the persisted Merkle tree from the stored root toward the
+    /// terminal node (leaf or empty branch) for the given key path.
+    ///
+    /// This method is storage-backed: each step resolves children through
+    /// `MerkleStorage::load_node` using node hashes, rather than traversing the
+    /// in-memory `Node` graph directly.
+    ///
+    /// If `siblings` is provided, it is filled with sibling hashes along the
+    /// traversed path (from top to bottom), which is used by proof generation.
+    ///
+    /// The returned leaf (if any) is the leaf reached by path resolution and
+    /// may have a different key/value than the queried key in non-existence
+    /// cases.
+    ///
+    /// Missing referenced nodes are treated as storage inconsistency and return
+    /// an error.
     fn down(
         &self,
         mut lvl: usize,
