@@ -90,7 +90,7 @@ impl MerkleTree {
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(*key);
-        let (key_resolution, _) = self.down_storage(0, path, None)?;
+        let (key_resolution, _) = self.down(0, path, None)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
             _ => Err(TreeError::key_not_found()),
@@ -100,7 +100,7 @@ impl MerkleTree {
     /// returns a boolean indicating whether the key exists in the tree
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(*key);
-        match self.down_storage(0, path, None)? {
+        match self.down(0, path, None)? {
             (Some((k, _)), _) if &k == key => Ok(true),
             _ => Ok(false),
         }
@@ -311,7 +311,7 @@ impl MerkleTree {
         }
     }
 
-    fn down_storage(
+    fn down(
         &self,
         mut lvl: usize,
         path: Vec<bool>,
@@ -367,7 +367,7 @@ impl MerkleTree {
 
         let mut siblings: Vec<Hash> = Vec::new();
 
-        match self.down_storage(0, path, Some(&mut siblings))? {
+        match self.down(0, path, Some(&mut siblings))? {
             (Some((k, v)), _) if &k == key => Ok((
                 v,
                 MerkleProof {
@@ -390,7 +390,7 @@ impl MerkleTree {
         let mut siblings: Vec<Hash> = Vec::new();
 
         // note: non-existence of a key can be in 2 cases:
-        match self.down_storage(0, path, Some(&mut siblings))? {
+        match self.down(0, path, Some(&mut siblings))? {
             // case i) the expected leaf does not exist
             (None, _) => Ok(MerkleProof {
                 existence: false,
