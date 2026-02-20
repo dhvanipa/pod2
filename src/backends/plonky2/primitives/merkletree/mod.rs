@@ -101,6 +101,7 @@ impl MerkleTree {
         value: &RawValue,
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
         let proof_non_existence = self.prove_nonexistence(key)?;
+
         let old_root = self.root;
         self.insert_key_value(*key, *value)?;
         let new_root = self.root;
@@ -213,16 +214,17 @@ impl MerkleTree {
         if hash == EMPTY_HASH {
             return Ok(());
         }
-        let node = storage
-            .load_node(hash)?
-            .ok_or_else(|| TreeError::from(anyhow::anyhow!("missing merkle node for hash {}", hash)))?;
+        let node = storage.load_node(hash)?.ok_or_else(|| {
+            TreeError::from(anyhow::anyhow!("missing merkle node for hash {}", hash))
+        })?;
         match node {
             StoredNode::Leaf { key, value } => {
                 let computed = kv_hash(&key, Some(value));
                 if computed != hash {
                     return Err(TreeError::from(anyhow::anyhow!(
                         "stored leaf hash mismatch: stored={}, computed={}",
-                        hash, computed
+                        hash,
+                        computed
                     )));
                 }
                 Ok(())
@@ -233,7 +235,8 @@ impl MerkleTree {
                 if computed != hash {
                     return Err(TreeError::from(anyhow::anyhow!(
                         "stored intermediate hash mismatch: stored={}, computed={}",
-                        hash, computed
+                        hash,
+                        computed
                     )));
                 }
                 Self::validate_node_graph(storage, left)?;
@@ -242,7 +245,12 @@ impl MerkleTree {
         }
     }
 
-    fn rebuild_with_siblings(&self, path: &[bool], siblings: &[Hash], mut child_hash: Hash) -> TreeResult<Hash> {
+    fn rebuild_with_siblings(
+        &self,
+        path: &[bool],
+        siblings: &[Hash],
+        mut child_hash: Hash,
+    ) -> TreeResult<Hash> {
         for i in (0..siblings.len()).rev() {
             let sibling_hash = siblings[i];
             let (left, right) = if path[i] {
@@ -347,11 +355,8 @@ impl MerkleTree {
         let (terminal, _lvl) = self.down(0, path.clone(), Some(&mut siblings))?;
         match terminal {
             Some((k, _)) if k == key => {
-                let new_root = self.rebuild_with_siblings_after_delete(
-                    &path,
-                    &siblings,
-                    EMPTY_HASH,
-                )?;
+                let new_root =
+                    self.rebuild_with_siblings_after_delete(&path, &siblings, EMPTY_HASH)?;
                 self.set_root(new_root)
             }
             _ => Err(TreeError::key_not_found()),
