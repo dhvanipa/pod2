@@ -12,15 +12,13 @@ use crate::middleware::{Hash, RawValue};
 
 use super::{error::TreeResult, TreeError};
 
-/// Storage backend abstraction for Merkle tree key-value snapshots.
+/// Storage backend abstraction for persisted Merkle nodes and root hash.
 ///
 /// The Merkle algorithm remains identical regardless of the backend. Backends
-/// only control where the underlying key-value set is persisted.
+/// only control where the node graph and root are persisted.
 pub trait MerkleStorage:
     Send + Sync + std::fmt::Debug + std::panic::RefUnwindSafe + std::panic::UnwindSafe
 {
-    fn load_kvs(&self) -> TreeResult<Option<HashMap<RawValue, RawValue>>>;
-    fn save_kvs(&self, kvs: &HashMap<RawValue, RawValue>) -> TreeResult<()>;
     fn load_root(&self) -> TreeResult<Option<Hash>>;
     fn save_root(&self, root: Hash) -> TreeResult<()>;
     fn load_node(&self, hash: Hash) -> TreeResult<Option<StoredNode>>;
@@ -36,7 +34,6 @@ pub enum StoredNode {
 /// In-memory storage backend.
 #[derive(Debug, Default)]
 pub struct InMemoryMerkleStorage {
-    state: RwLock<Option<HashMap<RawValue, RawValue>>>,
     root: RwLock<Option<Hash>>,
     nodes: RwLock<HashMap<Hash, StoredNode>>,
 }
@@ -48,23 +45,6 @@ impl InMemoryMerkleStorage {
 }
 
 impl MerkleStorage for InMemoryMerkleStorage {
-    fn load_kvs(&self) -> TreeResult<Option<HashMap<RawValue, RawValue>>> {
-        Ok(self
-            .state
-            .read()
-            .map_err(|e| TreeError::from(anyhow::anyhow!("rwlock poisoned: {e}")))?
-            .clone())
-    }
-
-    fn save_kvs(&self, kvs: &HashMap<RawValue, RawValue>) -> TreeResult<()> {
-        *self
-            .state
-            .write()
-            .map_err(|e| TreeError::from(anyhow::anyhow!("rwlock poisoned: {e}")))? =
-            Some(kvs.clone());
-        Ok(())
-    }
-
     fn load_root(&self) -> TreeResult<Option<Hash>> {
         Ok(*self
             .root
@@ -100,7 +80,7 @@ impl MerkleStorage for InMemoryMerkleStorage {
 
 /// Disk-backed storage backend.
 ///
-/// Stores the current key-value snapshot as JSON.
+/// Stores Merkle root and node index as JSON files.
 #[derive(Debug, Clone)]
 pub struct DiskMerkleStorage {
     path: PathBuf,
@@ -134,31 +114,6 @@ impl DiskMerkleStorage {
 }
 
 impl MerkleStorage for DiskMerkleStorage {
-    fn load_kvs(&self) -> TreeResult<Option<HashMap<RawValue, RawValue>>> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
-        let mut file = File::open(&self.path).map_err(anyhow::Error::from)?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).map_err(anyhow::Error::from)?;
-        let kvs = serde_json::from_slice(&buf).map_err(anyhow::Error::from)?;
-        Ok(Some(kvs))
-    }
-
-    fn save_kvs(&self, kvs: &HashMap<RawValue, RawValue>) -> TreeResult<()> {
-        if let Some(parent) = self.path.parent() {
-            create_dir_all(parent).map_err(anyhow::Error::from)?;
-        }
-        let bytes = serde_json::to_vec(kvs).map_err(anyhow::Error::from)?;
-        let tmp_path = self.path.with_extension("tmp");
-        {
-            let mut file = File::create(&tmp_path).map_err(anyhow::Error::from)?;
-            file.write_all(&bytes).map_err(anyhow::Error::from)?;
-        }
-        rename(tmp_path, &self.path).map_err(anyhow::Error::from)?;
-        Ok(())
-    }
-
     fn load_root(&self) -> TreeResult<Option<Hash>> {
         let path = self.root_path();
         if !path.exists() {
