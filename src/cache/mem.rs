@@ -3,8 +3,10 @@ use std::{
     collections::HashMap,
     ops::Deref,
     sync::{LazyLock, Mutex},
-    thread, time,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{thread, time};
 
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
@@ -54,8 +56,9 @@ pub fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
                     );
                 }
             } else {
-                // Another thread is building this entry, let's retry again in 100 ms
+                // Another thread is building this entry.
                 drop(cache); // release the lock
+                #[cfg(not(target_arch = "wasm32"))]
                 thread::sleep(time::Duration::from_millis(100));
                 continue;
             }
@@ -66,10 +69,14 @@ pub fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
         cache.insert(key.clone(), None);
         drop(cache); // release the lock
         log::info!("building {} and storing to the mem cache", name);
+        #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
         let data = build_fn(params);
-        let elapsed = std::time::Instant::now() - start;
-        log::debug!("built {} in {:?}", name, elapsed);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let elapsed = std::time::Instant::now() - start;
+            log::debug!("built {} in {:?}", name, elapsed);
+        }
 
         CACHE.lock()?.insert(key, Some(Box::leak(Box::new(data))));
         // Call `get` again and this time we'll retrieve the data from the cache
