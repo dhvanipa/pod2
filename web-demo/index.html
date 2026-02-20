@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>POD2 Browser Demo</title>
+    <style>
+      :root {
+        --bg: #0b1320;
+        --panel: #131e31;
+        --fg: #d9e5ff;
+        --muted: #8fa6d1;
+        --ok: #38d39f;
+        --err: #ff6f6f;
+        --btn: #1f6feb;
+      }
+      body {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: radial-gradient(circle at top, #172744, var(--bg) 60%);
+        color: var(--fg);
+      }
+      .wrap {
+        max-width: 960px;
+        margin: 32px auto;
+        padding: 0 16px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid #2a3d61;
+        border-radius: 10px;
+        padding: 16px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      button {
+        border: 0;
+        background: var(--btn);
+        color: white;
+        border-radius: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #status {
+        margin: 10px 0;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .err {
+        color: var(--err);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <h1>POD2 Web Worker Prover Demo</h1>
+        <p>
+          Runs `run_main_pod_points(mock)` inside a Web Worker so heavy proving work does not
+          block the main UI thread.
+        </p>
+        <div class="row">
+          <button id="run-mock">Run Mock Prover</button>
+          <button id="run-real">Run Real Prover</button>
+          <button id="reset">Reset Output</button>
+        </div>
+        <div id="status">Idle</div>
+        <pre id="output"></pre>
+      </div>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

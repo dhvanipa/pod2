@@ -13,6 +13,9 @@ pub mod middleware;
 #[cfg(any(test, feature = "examples"))]
 pub mod examples;
 
+#[cfg(all(feature = "web", target_arch = "wasm32", feature = "backend_plonky2"))]
+pub mod web;
+
 #[cfg(feature = "time")]
 pub mod time_macros {
     #[macro_export]
