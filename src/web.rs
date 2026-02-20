@@ -9,6 +9,21 @@ use crate::{
 };
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn log_stage(msg: &str) {
+    log(msg);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn log_stage(_msg: &str) {}
+
 fn install_panic_hook_once() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -18,6 +33,10 @@ fn install_panic_hook_once() {
 }
 
 fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::Error>> {
+    log_stage(&format!(
+        "[pod2/web] run_main_pod_points start mode={}",
+        if mock { "mock" } else { "real" }
+    ));
     let params = Params::default();
 
     let mock_prover = MockProver {};
@@ -25,8 +44,10 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     let (vd_set, prover): (_, &dyn MainPodProver) = if mock {
         (VDSet::new(&[]), &mock_prover as &dyn MainPodProver)
     } else {
+        log_stage("[pod2/web] building DEFAULT_VD_SET (real prover init)");
         ((*DEFAULT_VD_SET).clone(), &real_prover as &dyn MainPodProver)
     };
+    log_stage("[pod2/web] prover and vd_set ready");
 
     let game_sk = SecretKey::new_rand();
     let game_pk = game_sk.public_key();
@@ -38,6 +59,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     builder.insert("points", 3512);
     let pod_points_lvl_1 = builder.sign(&game_signer)?;
     pod_points_lvl_1.verify()?;
+    log_stage("[pod2/web] signed and verified level-1 dict");
 
     let mut builder = SignedDictBuilder::new(&params);
     builder.insert("player", "Alice");
@@ -45,6 +67,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     builder.insert("points", 5771);
     let pod_points_lvl_2 = builder.sign(&game_signer)?;
     pod_points_lvl_2.verify()?;
+    log_stage("[pod2/web] signed and verified level-2 dict");
 
     let input = format!(
         r#"
@@ -64,6 +87,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     "#
     );
     let module = load_module(&input, "points_module", &params, &[])?;
+    log_stage("[pod2/web] custom predicate module loaded");
     let batch = module.batch.clone();
     let points_pred = batch
         .predicate_ref_by_name("points")
@@ -95,6 +119,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     ))?;
     let pod_alice_lvl_1_points = builder.prove(prover)?;
     pod_alice_lvl_1_points.pod.verify()?;
+    log_stage("[pod2/web] proved pod_alice_lvl_1_points");
 
     let mut builder = MainPodBuilder::new(&params, &vd_set);
     let st_signed_by = builder.priv_op(Operation::dict_signed_by(&pod_points_lvl_2))?;
@@ -119,6 +144,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     ))?;
     let pod_alice_lvl_2_points = builder.prove(prover)?;
     pod_alice_lvl_2_points.pod.verify()?;
+    log_stage("[pod2/web] proved pod_alice_lvl_2_points");
 
     let mut builder = MainPodBuilder::new(&params, &vd_set);
     builder.add_pod(pod_alice_lvl_1_points)?;
@@ -136,6 +162,7 @@ fn run_main_pod_points_inner(mock: bool) -> Result<String, Box<dyn std::error::E
     ))?;
     let pod_alice_over_9000 = builder.prove(prover)?;
     pod_alice_over_9000.pod.verify()?;
+    log_stage("[pod2/web] proved and verified pod_alice_over_9000");
 
     Ok(format!(
         "{{\"mode\":\"{}\",\"result\":\"ok\",\"statement\":\"over_9000(\\\"Alice\\\")\"}}",

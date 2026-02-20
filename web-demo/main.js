@@ -6,11 +6,22 @@ const outputEl = document.getElementById("output");
 
 const worker = new Worker("./worker.js", { type: "module" });
 let running = false;
+let runningMode = null;
+let runStartedAt = 0;
+let ticker = null;
 
 function setRunning(next) {
   running = next;
   runMockBtn.disabled = next;
   runRealBtn.disabled = next;
+  if (!next) {
+    runningMode = null;
+    runStartedAt = 0;
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  }
 }
 
 function appendLine(line) {
@@ -55,8 +66,14 @@ worker.onerror = (event) => {
 function run(mode) {
   if (running) return;
   setRunning(true);
-  statusEl.textContent = `Running ${mode} prover in worker...`;
+  runningMode = mode;
+  runStartedAt = Date.now();
+  statusEl.textContent = `Running ${mode} prover in worker... 0s`;
   statusEl.className = "";
+  ticker = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - runStartedAt) / 1000);
+    statusEl.textContent = `Running ${runningMode} prover in worker... ${elapsedSec}s`;
+  }, 1000);
   worker.postMessage({ type: "run", mode });
 }
 
