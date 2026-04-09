@@ -774,10 +774,10 @@ pub struct BaseParams {
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
     num_public_statements_hash: 16,
-    max_statement_args: 5,
-    max_custom_predicate_arity: 5,
+    max_statement_args: 10,
+    max_custom_predicate_arity: 10,
     max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
-    max_operation_args: 5 + 1,
+    max_operation_args: 10 + 1,
 };
 
 /// Params: non dynamic parameters that define the circuit.
@@ -819,7 +819,7 @@ impl Default for Params {
             max_public_statements: 8,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
-            max_custom_predicate_wildcards: 9,
+            max_custom_predicate_wildcards: 18,
             max_merkle_proofs_containers: 20,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,

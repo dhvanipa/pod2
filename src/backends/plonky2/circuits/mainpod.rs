@@ -69,7 +69,7 @@ pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
-const MAX_VALUE_ARGS: usize = 5;
+const MAX_VALUE_ARGS: usize = 10;
 
 struct StatementArgCache {
     rhs: ValueTarget,
