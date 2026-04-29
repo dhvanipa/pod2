@@ -70,7 +70,10 @@ pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
-const MAX_VALUE_ARGS: usize = 5;
+// Must match `BASE_PARAMS.max_statement_args` — the equation cache is
+// zip_eq'd against a statement's full arg slots (see
+// `verify_op_replace_value_with_entry`).
+const MAX_VALUE_ARGS: usize = 16;
 
 struct StatementArgCache {
     rhs: ValueTarget,

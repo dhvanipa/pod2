@@ -470,7 +470,28 @@ fn blinding_gates(degree_bits: usize) -> usize {
         15 => 10342,
         16 => 13030,
         17 => 10846,
-        _ => panic!("not supported"),
+        // For degree_bits > 17 we extrapolate using plonky2's own formula
+        // (see `CircuitBuilder::num_blinding_gates`). With the standard zk
+        // recursion config and the SDK override `reduction_arity_bits =
+        // [4, 4, 4]` (so arity = 16, sum of (arity-1) = 45), D = 2, and
+        // num_query_rounds = 28:
+        //
+        //   final_poly_coeffs = 2^degree_bits / 16^3 = 2^(degree_bits - 12)
+        //   fri_openings      = 28 * (1 + 2*45 + 2*final_poly_coeffs)
+        //   total_blinding    = (D + fri_openings) + 2*(2*D + fri_openings)
+        //                     = 10 + 3 * fri_openings
+        //
+        // This is an upper bound — actual plonky2 values can be smaller at
+        // some degree boundaries (cf. the dip at degree_bits=17 above).
+        // Over-estimating is safe (the assert `degree_adjustment <= degree`
+        // still holds with comfortable margin); under-estimating breaks
+        // padding. We add a 50% margin on top.
+        n => {
+            let final_poly_coeffs = 1usize << (n - 12);
+            let fri_openings = 28 * (1 + 2 * 45 + 2 * final_poly_coeffs);
+            let total = 10 + 3 * fri_openings;
+            total + total / 2
+        }
     }
 }
 
@@ -535,7 +556,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
 
     let mut common_data = circuit_data.common.clone();
     common_data.fri_params.degree_bits = degree_bits;
-    common_data.fri_params.reduction_arity_bits = vec![4, 4, 4];
+    // Match what plonky2 picks under `ConstantArityBits(4, 5)`: stop when
+    // `degree_bits - 4*layers <= 5`, i.e. layers = ceil((degree_bits-5)/4),
+    // floored at 3 to match the historical default for small circuits.
+    let num_arity_layers = ((degree_bits.saturating_sub(5) + 3) / 4).max(3);
+    common_data.fri_params.reduction_arity_bits = vec![4; num_arity_layers];
     #[cfg(feature = "zk")]
     {
         common_data.fri_params.hiding = true;

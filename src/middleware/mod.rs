@@ -774,10 +774,13 @@ pub struct BaseParams {
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
     num_public_statements_hash: 16,
-    max_statement_args: 5,
-    max_custom_predicate_arity: 5,
+    // Bumped for zk-craft episode-1: largest recipe (CraftRefineryCracked)
+    // has 14 public args and ~30 AND clauses. The verifier circuit pushes
+    // past degree_bits=17 — `blinding_gates` extrapolates beyond that.
+    max_statement_args: 16,
+    max_custom_predicate_arity: 32,
     max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
-    max_operation_args: 5 + 1,
+    max_operation_args: 16 + 1,
 };
 
 /// Params: non dynamic parameters that define the circuit.
@@ -815,11 +818,13 @@ impl Default for Params {
         Self {
             max_input_pods: 2,
             max_input_pods_public_statements: 8,
-            max_statements: 48,
-            max_public_statements: 8,
-            max_custom_predicates: 8,
-            max_custom_predicate_verifications: 8,
-            max_custom_predicate_wildcards: 8,
+            // Bumped for zk-craft episode-1: largest recipes need ~50 AND
+            // clauses + ~30 wildcards.
+            max_statements: 96,
+            max_public_statements: 16,
+            max_custom_predicates: 16,
+            max_custom_predicate_verifications: 16,
+            max_custom_predicate_wildcards: 32,
             max_merkle_proofs_containers: 20,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,
